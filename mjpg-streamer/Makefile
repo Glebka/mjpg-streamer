@@ -37,6 +37,7 @@ PLUGINS += input_gs.so
 #PLUGINS += output_file.so
 #PLUGINS += output_udp.so
 PLUGINS += output_http.so
+PLUGINS += output_rawtcp.so
 #PLUGINS += input_testpicture.so
 #PLUGINS += output_autofocus.so
 #PLUGINS += input_gspcav1.so
@@ -99,6 +100,10 @@ input_control.so: mjpg_streamer.h utils.h
 output_file.so: mjpg_streamer.h utils.h
 	make -C plugins/output_file all
 	cp plugins/output_file/output_file.so .
+
+output_rawtcp.so: mjpg_streamer.h utils.h
+	make -C plugins/output_rawtcp all
+	cp plugins/output_rawtcp/output_rawtcp.so .
 
 ifeq ($(WXP_COMPAT),true)
 output_http.so: mjpg_streamer.h utils.h
