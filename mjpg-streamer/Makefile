@@ -33,13 +33,14 @@ APP_BINARY = mjpg_streamer
 
 # define the names and targets of the plugins
 PLUGINS = input_uvc.so
-PLUGINS += output_file.so
-PLUGINS += output_udp.so
+PLUGINS += input_gs.so
+#PLUGINS += output_file.so
+#PLUGINS += output_udp.so
 PLUGINS += output_http.so
-PLUGINS += input_testpicture.so
+#PLUGINS += input_testpicture.so
 #PLUGINS += output_autofocus.so
 #PLUGINS += input_gspcav1.so
-PLUGINS += input_file.so
+#PLUGINS += input_file.so
 # PLUGINS += output_rtsp.so
 # PLUGINS += output_ptp2.so # commented out because it depends on libgphoto
 # PLUGINS += input_control.so # commented out because the output_http does it's job
@@ -79,6 +80,16 @@ else
 input_uvc.so: mjpg_streamer.h utils.h
 	make -C plugins/input_uvc all
 	cp plugins/input_uvc/input_uvc.so .
+endif
+
+ifeq ($(USE_LIBV4L2),true)
+input_gs.so: mjpg_streamer.h utils.h
+	make -C plugins/input_grayscale USE_LIBV4L2=true all
+	cp plugins/input_grayscale/input_gs.so .
+else
+input_gs.so: mjpg_streamer.h utils.h
+	make -C plugins/input_grayscale all
+	cp plugins/input_grayscale/input_gs.so .
 endif
 
 input_control.so: mjpg_streamer.h utils.h
