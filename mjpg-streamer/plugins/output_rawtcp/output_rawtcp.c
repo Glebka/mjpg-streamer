@@ -36,6 +36,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <syslog.h>
+#include <netinet/in.h>
 
 #include <dirent.h>
 
@@ -49,6 +50,15 @@ static globals *pglobal;
 static max_frame_size;
 static unsigned char *frame = NULL;
 static int input_number = 0;
+static int  port;
+
+// listen socket and client socket fdesks
+static int sockfd=0, newsockfd=0;
+
+void sigPipeHandler()
+{
+    OPRINT("Caught SIGPIPE\n");
+}
 
 /******************************************************************************
 Description.: print a help message
@@ -85,6 +95,9 @@ void worker_cleanup(void *arg)
     if(frame != NULL) {
         free(frame);
     }
+    close( newsockfd );
+    close( sockfd );
+    
 }
 /******************************************************************************
 Description.: this is the main worker thread
@@ -96,41 +109,96 @@ void *worker_thread(void *arg)
 {
     int ok = 1, frame_size = 0;
     unsigned char *tmp_framebuffer = NULL;
-
+    
     /* set cleanup handler to cleanup allocated ressources */
     pthread_cleanup_push(worker_cleanup, NULL);
+    
+    
+    
+    struct sockaddr_in serv_addr, cli_addr;
+    
+    OPRINT("Opening socket...\n");
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0)
+        OPRINT("ERROR opening socket\n");
+    
+    bzero((char *) &serv_addr, sizeof(serv_addr));
 
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = port;
+    
+    if (bind(sockfd, (struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
+    {
+        OPRINT("ERROR on binding\n");
+        return NULL;
+    }
+    
     while(ok >= 0 && !pglobal->stop) 
     {
-        DBG("waiting for fresh frame\n");
-        pthread_mutex_lock(&pglobal->in[input_number].db);
-        pthread_cond_wait(&pglobal->in[input_number].db_update, &pglobal->in[input_number].db);
+        listen(sockfd, 5);
+        OPRINT("Waiting for the client connection...\n");
+        size_t clilen = sizeof(cli_addr);
+        newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr,&clilen);
 
-        /* read buffer */
-        frame_size = pglobal->in[input_number].size;
-
-        /* check if buffer for frame is large enough, increase it if necessary */
-        if(frame_size > max_frame_size) {
-            DBG("increasing buffer size to %d\n", frame_size);
-
-            max_frame_size = frame_size + (1 << 16);
-            if((tmp_framebuffer = realloc(frame, max_frame_size)) == NULL) {
-                pthread_mutex_unlock(&pglobal->in[input_number].db);
-                LOG("not enough memory\n");
-                return NULL;
-            }
-
-            frame = tmp_framebuffer;
+        if (newsockfd < 0)
+        {
+            OPRINT("ERROR on accept\n");
+            return NULL;
         }
-
-        /* copy frame to our local buffer now */
-        memcpy(frame, pglobal->in[input_number].buf, frame_size);
-
-        /* allow others to access the global buffer again */
-        pthread_mutex_unlock(&pglobal->in[input_number].db);
+    
+        OPRINT("Client was connected.\n");
         
-    }
+        while(ok >= 0 && !pglobal->stop)
+        {
+            pthread_mutex_lock(&pglobal->in[input_number].db);
+            pthread_cond_wait(&pglobal->in[input_number].db_update, &pglobal->in[input_number].db);
 
+            /* read buffer */
+            frame_size = pglobal->in[input_number].size;
+            /* check if buffer for frame is large enough, increase it if necessary */
+            if(frame_size > max_frame_size) 
+            {
+                DBG("increasing buffer size to %d\n", frame_size);
+
+                max_frame_size = frame_size + (1 << 16);
+                if((tmp_framebuffer = realloc(frame, max_frame_size)) == NULL) 
+                {
+                    pthread_mutex_unlock(&pglobal->in[input_number].db);
+                    OPRINT("not enough memory\n");
+                    return NULL;
+                }
+
+                frame = tmp_framebuffer;
+            }
+            
+            /* copy frame to our local buffer now */
+            memcpy(frame, pglobal->in[input_number].buf, frame_size);
+            
+            /* allow others to access the global buffer again */
+            pthread_mutex_unlock(&pglobal->in[input_number].db);
+            
+            int toWrite = frame_size;
+            int written = 0;
+            
+            written = write( newsockfd, &frame_size, sizeof( int ) );
+            if ( written < 0 )
+                break;
+            do
+            {
+                written = write( newsockfd, frame, toWrite );
+                toWrite -= written;
+            }
+            while ( toWrite != 0 && written > 0);
+            if ( written < 0 )
+                break;
+        }
+        OPRINT("Client was disconnected.\n");
+        close( newsockfd );
+        newsockfd = 0;
+    }
+    close( sockfd );
+    sockfd = 0;
     /* cleanup now */
     pthread_cleanup_pop(1);
 
@@ -147,7 +215,7 @@ Return Value: 0 if everything is OK, non-zero otherwise
 int output_init(output_parameter *param)
 {
     int i;
-    int  port = htons(778);
+    port = htons(778);
 
     param->argv[0] = OUTPUT_PLUGIN_NAME;
 
